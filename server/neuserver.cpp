@@ -216,12 +216,12 @@ void handleHTTP(websocketpp::connection_hdl handler) {
         if(documentRoot.back() == '/') {
             documentRoot.pop_back();
         }
-        debug::log(debug::LogTypeInfo, "Hello From jDocumentRoot");
+        //debug::log(debug::LogTypeInfo, "Hello From jDocumentRoot");
         if (splittedRoutes.size() > 0) {
             bool found = false;
             for (const auto& elem : splittedRoutes) {
                 if (resource.find(elem) != std::string::npos) {
-                    debug::log(debug::LogTypeInfo, resource + " found it!");
+                    //debug::log(debug::LogTypeInfo, resource + " found it!");
                     resource = "/";
                     found = true;
                     break;
@@ -229,7 +229,7 @@ void handleHTTP(websocketpp::connection_hdl handler) {
             }
 
             if (!found) {
-                debug::log(debug::LogTypeInfo, resource + " sorry :( !");
+                //debug::log(debug::LogTypeInfo, resource + " sorry :( !");
             }
         }
 
