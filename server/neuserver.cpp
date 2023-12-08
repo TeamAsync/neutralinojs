@@ -6,6 +6,8 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <sstream>
+#include <vector>
 
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
@@ -35,6 +37,8 @@ wsclientsMap extConnections;
 
 bool initialized = false;
 bool applyConfigHeaders = false;
+vector<string> splittedRoutes;
+
 
 bool __isExtensionEndpoint(const string &url) {
     return regex_match(url, regex(".*extensionId=.*"));
@@ -180,15 +184,53 @@ void handleMessage(websocketpp::connection_hdl handler, websocketserver::message
     }
 }
 
+vector<string> split(const string& str, char delimiter) {
+    vector<string> tokens;
+    string token;
+    istringstream tokenStream(str);
+
+    while (getline(tokenStream, token, delimiter)) {
+        tokens.push_back(token);
+    }
+
+    return tokens;
+}
+
+
 void handleHTTP(websocketpp::connection_hdl handler) {
     websocketserver::connection_ptr con = server->get_con_from_hdl(handler);
     string resource = con->get_resource();
     json jDocumentRoot = settings::getOptionForCurrentMode("documentRoot");
+    json jReactRoutes = settings::getOptionForCurrentMode("reactRoutes");
+    if (splittedRoutes.size() == 0 && !jReactRoutes.is_null()) {
+        if (!jReactRoutes.is_null()) {
+            string reactRoutes = jReactRoutes.get<string>();
+            splittedRoutes = split(reactRoutes, ',');
+        }
+    }
+
+
     if(!jDocumentRoot.is_null()) {
         string documentRoot = jDocumentRoot.get<string>();
 
         if(documentRoot.back() == '/') {
             documentRoot.pop_back();
+        }
+        debug::log(debug::LogTypeInfo, "Hello From jDocumentRoot");
+        if (splittedRoutes.size() > 0) {
+            bool found = false;
+            for (const auto& elem : splittedRoutes) {
+                if (resource.find(elem) != std::string::npos) {
+                    debug::log(debug::LogTypeInfo, resource + " found it!");
+                    resource = "/";
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                debug::log(debug::LogTypeInfo, resource + " sorry :( !");
+            }
         }
 
         if(!documentRoot.empty()) {
