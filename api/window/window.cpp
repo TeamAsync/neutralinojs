@@ -547,12 +547,11 @@ void __createWindow() {
     windowHandle = (HWND) nativeWindow->window();
     #endif
 
-    #if !defined(_WIN32)
     if(!window::isSavedStateLoaded() && windowProps.center)
         window::center(true);
     else
         window::move(windowProps.x, windowProps.y);
-    #endif
+
 
     if(windowProps.maximize)
         window::maximize();
