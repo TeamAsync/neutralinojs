@@ -11,6 +11,9 @@
 #include <map>
 #include <cstring>
 #include <vector>
+#include <filesystem>
+#include <atomic>
+#include <climits>
 
 #include "resources.h"
 #include "lib/tinyprocess/process.hpp"
@@ -21,16 +24,12 @@
 #include <unistd.h>
 extern char **environ;
 
-#define CONVSTR(S) S
-
 #elif defined(_WIN32)
 #define _WINSOCKAPI_
 #include <windows.h>
 #include <tchar.h>
 #include <gdiplus.h>
 #include <shlwapi.h>
-
-#define CONVSTR(S) helpers::str2wstr(S)
 
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Gdiplus.lib")
@@ -43,7 +42,7 @@ extern char **environ;
 #include "settings.h"
 #include "resources.h"
 #include "api/events/events.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 #include "api/debug/debug.h"
 #include "api/os/os.h"
 #include "api/window/window.h"
@@ -66,6 +65,7 @@ bool useOtherTempTrayIcon = true;
 #endif
 map<int, TinyProcessLib::Process*> spawnedProcesses;
 mutex spawnedProcessesLock;
+atomic<int> nextVirtualPid(0);
 
 void __dispatchSpawnedProcessEvt(int virtualPid, const string &action, const json &data) {
     json evt;
@@ -114,17 +114,21 @@ os::CommandResult execCommand(string command, const string &input, bool backgrou
             }, !input.empty()
         );
     else {
-        childProcess = new TinyProcessLib::Process(CONVSTR(command), CONVSTR(cwd), nullptr, nullptr);
+        childProcess = new TinyProcessLib::Process(CONVSTR(command), CONVSTR(cwd),
+                                nullptr, nullptr, !input.empty());
     }
+
     commandResult.pid = childProcess->get_id();
 
+    if(!input.empty()) {
+        childProcess->write(input);
+        childProcess->close_stdin();
+    }
+
     if(!background) {
-        if(!input.empty()) {
-            childProcess->write(input);
-            childProcess->close_stdin();
-        }
         commandResult.exitCode = childProcess->get_exit_status(); // sync wait
     }
+
     delete childProcess;
     return commandResult;
 }
@@ -136,7 +140,11 @@ pair<int, int> spawnProcess(string command, const string &cwd) {
 
     TinyProcessLib::Process *childProcess;
     lock_guard<mutex> guard(spawnedProcessesLock);
-    int virtualPid = spawnedProcesses.size();
+
+    int virtualPid = nextVirtualPid++;
+    if (virtualPid == INT_MAX) {
+        nextVirtualPid = 0;
+    }
 
     childProcess = new TinyProcessLib::Process(
         CONVSTR(command), CONVSTR(cwd),
@@ -207,13 +215,21 @@ string getPath(const string &name) {
         path = sago::getSaveGamesFolder1();
     else if(name == "saveGames2")
         path = sago::getSaveGamesFolder2();
+    else if(name == "temp")
+        path = FS_CONVWSTR(filesystem::temp_directory_path());
     return helpers::normalizePath(path);
 }
 
 string getEnv(const string &key) {
+    #if defined(_WIN32)
+    wchar_t value[_MAX_ENV];
+    return GetEnvironmentVariable(CONVSTR(key).c_str(), value, _MAX_ENV) > 0 ? 
+            helpers::wstr2str(value) : "";
+    #else
     char *value;
     value = getenv(key.c_str());
     return value == nullptr ? "" : string(value);
+    #endif
 }
 
 namespace controllers {
@@ -262,6 +278,7 @@ json execCommand(const json &input) {
     output["success"] = true;
     return output;
 }
+
 
 json spawnProcess(const json &input) {
     json output;
@@ -344,7 +361,7 @@ json getEnvs(const json &input) {
     #if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
     char **envs = environ;
     for(; *envs; envs++) {
-        vector<string> env = helpers::split(string(*envs), '=');
+        vector<string> env = helpers::splitTwo(string(*envs), '=');
         string key = env[0];
         string value = env.size() == 2 ? env[1] : "";
         output["returnValue"][key] = value;
@@ -357,7 +374,7 @@ json getEnvs(const json &input) {
         if(envs[i] != '\0') {
             continue;
         }
-        vector<string> env = helpers::split(helpers::wstr2str(wstring(envs + prevIndex, envs + i)), '=');
+        vector<string> env = helpers::splitTwo(helpers::wstr2str(wstring(envs + prevIndex, envs + i)), '=');
         string key = env[0];
         string value = env.size() == 2 ? env[1] : "";
         output["returnValue"][key] = value;
@@ -419,6 +436,7 @@ json showFolderDialog(const json &input) {
 
     if(helpers::hasField(input, "defaultPath")) {
         defaultPath = input["defaultPath"].get<string>();
+        defaultPath = helpers::unNormalizePath(defaultPath);
     }
 
     string selectedEntry = pfd::select_folder(title, defaultPath, pfd::opt::none).result();
@@ -427,6 +445,7 @@ json showFolderDialog(const json &input) {
     output["success"] = true;
     return output;
 }
+
 
 json showSaveDialog(const json &input) {
     json output;
@@ -450,6 +469,7 @@ json showSaveDialog(const json &input) {
 
     if(helpers::hasField(input, "defaultPath")) {
         defaultPath = input["defaultPath"].get<string>();
+        defaultPath = helpers::unNormalizePath(defaultPath);
     }
 
     string selectedEntry = pfd::save_file(title, defaultPath, filters, option).result();
@@ -565,34 +585,32 @@ json setTray(const json &input) {
     GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
     #endif
     json output;
-    int menuCount = 1;
 
     if(helpers::hasField(input, "menuItems")) {
-        menuCount += input["menuItems"].size();
-    }
+        int menuCount = input["menuItems"].size();
+        menus[menuCount - 1] = { nullptr, nullptr, 0, 0, nullptr, nullptr };
 
-    menus[menuCount - 1] = { nullptr, nullptr, 0, 0, nullptr, nullptr };
+        int i = 0;
+        for (const auto &menuItem: input["menuItems"]) {
+            char *id = nullptr;
+            char *text = helpers::cStrCopy(menuItem["text"].get<string>());
+            int disabled = 0;
+            int checked = 0;
+            if(helpers::hasField(menuItem, "id")) {
+                id = helpers::cStrCopy(menuItem["id"].get<string>());
+            }
+            if(helpers::hasField(menuItem, "isDisabled")) {
+                disabled = menuItem["isDisabled"].get<bool>() ? 1 : 0;
+            }
+            if(helpers::hasField(menuItem, "isChecked")) {
+                checked = menuItem["isChecked"].get<bool>() ? 1 : 0;
+            }
 
-    int i = 0;
-    for (const auto &menuItem: input["menuItems"]) {
-        char *id = nullptr;
-        char *text = helpers::cStrCopy(menuItem["text"].get<string>());
-        int disabled = 0;
-        int checked = 0;
-        if(helpers::hasField(menuItem, "id")) {
-            id = helpers::cStrCopy(menuItem["id"].get<string>());
+            delete[] menus[i].id;
+            delete[] menus[i].text;
+            menus[i] = { id, text, disabled, checked, __handleTrayMenuItem, nullptr };
+            i++;
         }
-        if(helpers::hasField(menuItem, "isDisabled")) {
-            disabled = menuItem["isDisabled"].get<bool>() ? 1 : 0;
-        }
-        if(helpers::hasField(menuItem, "isChecked")) {
-            checked = menuItem["isChecked"].get<bool>() ? 1 : 0;
-        }
-
-        delete[] menus[i].id;
-        delete[] menus[i].text;
-        menus[i] = { id, text, disabled, checked, __handleTrayMenuItem, nullptr };
-        i++;
     }
 
     tray.menu = menus;
@@ -601,22 +619,22 @@ json setTray(const json &input) {
         string iconPath = input["icon"].get<string>();
         #if defined(__linux__)
         string fullIconPath;
-        if(resources::getMode() == resources::ResourceModeDir) {
-            fullIconPath = fs::getFullPathFromRelative(settings::joinAppPath("")) + iconPath;
+        if(resources::isDirMode()) {
+            fullIconPath = string(filesystem::absolute(settings::joinAppPath(iconPath)));
         }
         else {
             // Use alternating tempIconPath since tray_update()
             // doesn't update the icon if the path is the same as the previous one,
             // regardless whether the file contents changed or not.
             useOtherTempTrayIcon = !useOtherTempTrayIcon;
-            string tempIconPath = settings::joinAppPath(
+            string tempIconPath = settings::joinAppDataPath(
                     useOtherTempTrayIcon ?  "/.tmp/tray_icon_linux_01.png" : "/.tmp/tray_icon_linux_02.png"
             );
 
-            string tempDirPath = settings::joinAppPath("/.tmp");
-            fs::createDirectory(tempDirPath);
+            string tempDirPath = settings::joinAppDataPath("/.tmp");
+            filesystem::create_directories(tempDirPath);
             resources::extractFile(iconPath, tempIconPath);
-            fullIconPath = fs::getFullPathFromRelative(tempIconPath);
+            fullIconPath = filesystem::absolute(tempIconPath);
         }
         delete[] tray.icon;
         tray.icon = helpers::cStrCopy(fullIconPath);

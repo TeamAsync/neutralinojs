@@ -18,14 +18,21 @@ using json = nlohmann::json;
 
 namespace helpers {
 
-vector<string> split(const string &s, char delim) {
+vector<string> split(const string &s, char delim, unsigned int stopAfter) {
     stringstream ss(s);
     string item;
     vector<string> tokens;
     while (getline(ss, item, delim)) {
         tokens.push_back(item);
+        if(stopAfter !=-1 && tokens.size() == stopAfter - 1) {
+            delim = '\n';
+        }
     }
     return tokens;
+}
+
+vector<string> splitTwo(const string &s, char delim) {
+    return split(s, delim, 2);
 }
 
 string generateToken() {
@@ -38,8 +45,11 @@ string generateToken() {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz";
 
-    for (int i = 0; i < 48; ++i) {
+    for (int i = 0; i < 96; ++i) {
         s += alphanum[rand() % (sizeof(alphanum) - 1)];
+        if(i == 47) {
+            s += ".";
+        }
     }
 
     return s;
@@ -105,9 +115,34 @@ vector<string> getModes() {
     return {"window", "browser", "cloud", "chrome"};
 }
 
+string appModeToStr(settings::AppMode mode) {
+    switch(mode) {
+        case settings::AppModeWindow:
+            return "window";
+        case settings::AppModeBrowser:
+            return "browser";
+        case settings::AppModeCloud:
+            return "cloud";
+        case settings::AppModeChrome:
+            return "chrome";
+        default:
+            return "invalid";
+    }
+}
+
 string normalizePath(string &path) {
     #if defined(_WIN32)
     replace(path.begin(), path.end(), '\\', '/');
+    #endif
+    if(path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    return path;
+}
+
+string unNormalizePath(string &path) {
+    #if defined(_WIN32)
+    replace(path.begin(), path.end(), '/', '\\');
     #endif
     return path;
 }

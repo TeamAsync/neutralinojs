@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <regex>
+#include <filesystem>
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
 #include <unistd.h>
@@ -11,7 +12,6 @@
 #include <sys/stat.h>
 #include <libgen.h>
 
-#define CONVSTR(S) S.c_str()
 #elif defined(_WIN32)
 #define _WINSOCKAPI_
 #include <windows.h>
@@ -21,11 +21,6 @@
 
 #define NEU_WINDOWS_TICK 10000000
 #define NEU_SEC_TO_UNIX_EPOCH 11644473600LL
-
-// ifstream and ofstream do not support UTF-8 file paths on Windows.
-// However there is a non-standard extension which allows the use of wide strings.
-// So, before we pass the path string to the constructor, we have to convert it to a UTF-16 std::wstring.
-#define CONVSTR(S) helpers::str2wstr(S)
 #endif
 
 #include <efsw/efsw.hpp>
@@ -34,7 +29,7 @@
 #include "settings.h"
 #include "helpers.h"
 #include "errors.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 #include "api/os/os.h"
 #include "api/events/events.h"
 
@@ -129,22 +124,6 @@ long long __winTickToUnixMS(long long windowsTicks) {
 }
 #endif
 
-bool createDirectory(const string &path) {
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    return mkdir(path.c_str(), 0700) == 0;
-    #elif defined(_WIN32)
-    return CreateDirectory(helpers::str2wstr(path).c_str(), nullptr) == 1;
-    #endif
-}
-
-bool removeFile(const string &filename) {
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    return remove(filename.c_str()) == 0;
-    #elif defined(_WIN32)
-    return DeleteFile(helpers::str2wstr(filename).c_str()) == 1;
-    #endif
-}
-
 string getDirectoryName(const string &filename){
     #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
     return dirname((char*)filename.c_str());
@@ -157,19 +136,9 @@ string getDirectoryName(const string &filename){
 }
 
 string getCurrentDirectory() {
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    return getcwd(nullptr, 0);
-    #elif defined(_WIN32)
-    TCHAR currentDir[MAX_PATH];
-    GetCurrentDirectory(MAX_PATH, currentDir);
-    string currentDirStr(helpers::wstr2str(currentDir));
-    return helpers::normalizePath(currentDirStr);
-    #endif
-}
-
-string getFullPathFromRelative(const string &path) {
-    #if defined(__linux__)
-    return realpath(path.c_str(), nullptr);
+    string path = FS_CONVWSTR(filesystem::current_path());
+    #if defined(_WIN32)
+    return helpers::normalizePath(path);
     #else
     return path;
     #endif
@@ -346,7 +315,7 @@ fs::FileStats getStats(const string &path) {
     return fileStats;
 }
 
-fs::DirReaderResult readDirectory(const string &path) {
+fs::DirReaderResult readDirectory(const string &path, bool recursive) {
     fs::DirReaderResult dirResult;
     fs::FileStats fileStats = fs::getStats(path);
     if(fileStats.status != errors::NE_ST_OK) {
@@ -354,43 +323,28 @@ fs::DirReaderResult readDirectory(const string &path) {
         return dirResult;
     }
 
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    DIR *dirp;
-    struct dirent *directory;
-    dirp = opendir(path.c_str());
-    if(dirp) {
-        while((directory = readdir(dirp)) != nullptr) {
-            fs::EntryType type = fs::EntryTypeOther;
-            if(directory->d_type == DT_DIR) {
-                type = fs::EntryTypeDir;
-            }
-            else if(directory->d_type == DT_REG) {
-                type = fs::EntryTypeFile;
-            }
+    for(auto entry = filesystem::recursive_directory_iterator(CONVSTR(path));
+        entry != filesystem::recursive_directory_iterator();
+        ++entry) {
 
-            dirResult.entries.push_back({ directory->d_name, type });
+        fs::EntryType type = fs::EntryTypeOther;
+        if(entry->is_directory()) {
+            type = fs::EntryTypeDir;
         }
-        closedir(dirp);
-    }
-    #elif defined(_WIN32)
-    string search_path = path + "/*.*";
-    WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFile(helpers::str2wstr(search_path).c_str(), &fd);
-    if(hFind != INVALID_HANDLE_VALUE) {
-        do {
-            fs::EntryType type = fs::EntryTypeOther;
-            if((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == FILE_ATTRIBUTE_DIRECTORY) {
-                type = fs::EntryTypeDir;
-            }
-            else {
-                type = fs::EntryTypeFile;
-            }
+        else if(entry->is_regular_file()) {
+            type = fs::EntryTypeFile;
+        }
 
-            dirResult.entries.push_back({ helpers::wstr2str(fd.cFileName), type });
-        } while(FindNextFile(hFind, &fd));
-        FindClose(hFind);
+        auto entryPath = entry->path();
+        string entryStr = FS_CONVWSTR(entry->path());
+
+        dirResult.entries.push_back({ FS_CONVWSTR(entryPath.filename()),
+            helpers::normalizePath(entryStr), type });
+
+        if(!recursive) {
+            entry.disable_recursion_pending();
+        }
     }
-    #endif
     return dirResult;
 }
 
@@ -439,34 +393,34 @@ json createDirectory(const json &input) {
         return output;
     }
     string path = input["path"].get<string>();
-    if(fs::createDirectory(path)) {
+    if(filesystem::create_directories(CONVSTR(path))) {
         output["success"] = true;
         output["message"] = "Directory " + path + " was created";
     }
-    else{
+    else {
         output["error"] = errors::makeErrorPayload(errors::NE_FS_DIRCRER, path);
     }
     return output;
 }
 
-json removeDirectory(const json &input) {
+json remove(const json& input) {
     json output;
-    if(!helpers::hasRequiredFields(input, {"path"})) {
+
+    if (!helpers::hasRequiredFields(input, {"path"})) {
         output["error"] = errors::makeMissingArgErrorPayload();
         return output;
     }
-    string path = input["path"].get<string>();
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    if(rmdir(path.c_str()) == 0) {
-    #elif defined(_WIN32)
-    if(RemoveDirectory(helpers::str2wstr(path).c_str())) {
-    #endif
+
+    std::string path = input["path"].get<std::string>();
+
+    if(filesystem::remove_all(CONVSTR(path))) {
         output["success"] = true;
-        output["message"] = "Directory " + path + " was removed";
+        output["message"] = path + " was removed";
     }
-    else{
-        output["error"] = errors::makeErrorPayload(errors::NE_FS_RMDIRER, path);
+    else {
+        output["error"] = errors::makeErrorPayload(errors::NE_FS_REMVERR, path);
     }
+
     return output;
 }
 
@@ -614,23 +568,6 @@ json getOpenedFileInfo(const json &input) {
     return output;
 }
 
-json removeFile(const json &input) {
-    json output;
-    if(!helpers::hasRequiredFields(input, {"path"})) {
-        output["error"] = errors::makeMissingArgErrorPayload();
-        return output;
-    }
-    string filename = input["path"].get<string>();
-    if(fs::removeFile(filename)) {
-        output["success"] = true;
-        output["message"] = filename + " was deleted";
-    }
-    else{
-        output["error"] = errors::makeErrorPayload(errors::NE_FS_FILRMER, filename);
-    }
-    return output;
-}
-
 json readDirectory(const json &input) {
     json output;
     output["returnValue"] = json::array();
@@ -639,7 +576,13 @@ json readDirectory(const json &input) {
         return output;
     }
     string path = input["path"].get<string>();
-    fs::DirReaderResult dirResult = fs::readDirectory(path);
+    bool recursive = false;
+
+    if(helpers::hasField(input, "recursive")) {
+        recursive = input["recursive"].get<bool>();
+    }
+
+    fs::DirReaderResult dirResult = fs::readDirectory(path, recursive);
     if(dirResult.status != errors::NE_ST_OK) {
         output["error"] = errors::makeErrorPayload(dirResult.status, path);
         return output;
@@ -657,14 +600,15 @@ json readDirectory(const json &input) {
 
         output["returnValue"].push_back({
             {"entry", entry.name},
-            {"type", type}
+            {"path", entry.path},
+            {"type", type},
         });
     }
     output["success"] = true;
     return output;
 }
 
-json copyFile(const json &input) {
+json copy(const json &input) {
     json output;
     if(!helpers::hasRequiredFields(input, {"source", "destination"})) {
         output["error"] = errors::makeMissingArgErrorPayload();
@@ -672,24 +616,35 @@ json copyFile(const json &input) {
     }
     string source = input["source"].get<string>();
     string destination = input["destination"].get<string>();
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    string command = "cp \"" + source + "\" \"" + destination + "\"";
-    os::CommandResult commandResult = os::execCommand(command);
-    if(commandResult.stdErr.empty()) {
 
-    #elif defined(_WIN32)
-    if(CopyFile(helpers::str2wstr(source).c_str(), helpers::str2wstr(destination).c_str(), false) == 1) {
-    #endif
+    error_code ec;
+    auto copyOptions = filesystem::copy_options::none;
+
+    if(!helpers::hasField(input, "recursive") || input["recursive"].get<bool>()) {
+        copyOptions |= filesystem::copy_options::recursive;
+    }
+
+    if(!helpers::hasField(input, "overwrite") || input["overwrite"].get<bool>()) {
+        copyOptions |= filesystem::copy_options::overwrite_existing;
+    }
+
+    if(helpers::hasField(input, "skip") && input["skip"].get<bool>()) {
+        copyOptions |= filesystem::copy_options::skip_existing;
+    }
+
+    filesystem::copy(CONVSTR(source), CONVSTR(destination), copyOptions, ec);
+
+    if(!ec) {
         output["success"] = true;
-        output["message"] = "File copy operation was successful";
+        output["message"] = "Copy operation was successful";
     }
     else{
-        output["error"] = errors::makeErrorPayload(errors::NE_FS_COPYFER, source + " -> " + destination);
+        output["error"] = errors::makeErrorPayload(errors::NE_FS_COPYERR, source + " -> " + destination);
     }
     return output;
 }
 
-json moveFile(const json &input) {
+json move(const json &input) {
     json output;
     if(!helpers::hasRequiredFields(input, {"source", "destination"})) {
         output["error"] = errors::makeMissingArgErrorPayload();
@@ -697,19 +652,16 @@ json moveFile(const json &input) {
     }
     string source = input["source"].get<string>();
     string destination = input["destination"].get<string>();
-    #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    string command = "mv \"" + source + "\" \"" + destination + "\"";
-    os::CommandResult commandResult = os::execCommand(command);
-    if(commandResult.stdErr.empty()) {
 
-    #elif defined(_WIN32)
-    if(MoveFile(helpers::str2wstr(source).c_str(), helpers::str2wstr(destination).c_str()) == 1) {
-    #endif
+    error_code ec;
+    filesystem::rename(CONVSTR(source), CONVSTR(destination), ec);
+
+    if(!ec) {
         output["success"] = true;
         output["message"] = "File move operation was successful";
     }
     else{
-        output["error"] = errors::makeErrorPayload(errors::NE_FS_MOVEFER, source + " -> " + destination);
+        output["error"] = errors::makeErrorPayload(errors::NE_FS_MOVEERR, source + " -> " + destination);
     }
     return output;
 }
@@ -784,6 +736,60 @@ json getWatchers(const json &input) {
             {"path", info.second}
         });
     }
+    output["success"] = true;
+    return output;
+}
+
+json getAbsolutePath(const json &input) {
+    json output;
+    if(!helpers::hasRequiredFields(input, {"path"})) {
+        output["error"] = errors::makeMissingArgErrorPayload();
+        return output;
+    }
+    string path = input["path"].get<string>();
+    string absPath = FS_CONVWSTR(filesystem::absolute(path));
+    output["returnValue"] = helpers::normalizePath(absPath);
+    output["success"] = true;
+    return output;
+}
+
+json getRelativePath(const json &input) {
+    json output;
+    if(!helpers::hasRequiredFields(input, {"path"})) {
+        output["error"] = errors::makeMissingArgErrorPayload();
+        return output;
+    }
+    string path = input["path"].get<string>();
+    string base = filesystem::current_path().string();
+
+    if(helpers::hasField(input, "base")) {
+        base = input["base"].get<string>();
+    }
+    
+    string relPath = FS_CONVWSTR(filesystem::relative(CONVSTR(path), CONVSTR(base)));
+    output["returnValue"] = helpers::normalizePath(relPath);
+    output["success"] = true;
+    return output;
+}
+
+json getPathParts(const json &input) {
+    json output;
+    if(!helpers::hasRequiredFields(input, {"path"})) {
+        output["error"] = errors::makeMissingArgErrorPayload();
+        return output;
+    }
+    auto path = filesystem::path(input["path"].get<string>());
+    json pathParts = {
+        {"rootName", FS_CONVWSTRN(path.root_name())},
+        {"rootDirectory", FS_CONVWSTRN(path.root_directory())},
+        {"rootPath", FS_CONVWSTRN(path.root_path())},
+        {"relativePath", FS_CONVWSTRN(path.relative_path())},
+        {"parentPath", FS_CONVWSTRN(path.parent_path())},
+        {"filename", path.filename()},
+        {"stem", path.stem()},
+        {"extension", path.extension()}
+    };
+    output["returnValue"] = pathParts;
     output["success"] = true;
     return output;
 }

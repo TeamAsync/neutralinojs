@@ -12,6 +12,10 @@
 
 #elif defined(__FreeBSD__)
 #define NEU_OS_NAME "FreeBSD"
+
+#else
+#define NEU_OS_NAME "Unknown"
+
 #endif
 
 #define NEU_APP_CONFIG_FILE "/neutralino.config.json"
@@ -38,10 +42,15 @@ struct ConfigOverride {
 
 enum AppMode { AppModeWindow, AppModeBrowser, AppModeCloud, AppModeChrome };
 
+bool init();
 json getConfig();
+string getAppId();
+string getNavigationUrl();
 string getGlobalVars();
 void setGlobalArgs(const json &args);
 string joinAppPath(const string &filename);
+string joinSystemDataPath(const string &filename);
+string joinAppDataPath(const string &filename);
 string getAppPath();
 string getConfigFile();
 settings::AppMode getMode();

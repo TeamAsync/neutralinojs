@@ -6,6 +6,137 @@ rename `Unreleased` topic with the new version tag. Finally, create a new `Unrel
 
 ## Unreleased
 
+## v5.5.0
+
+### Client library and globals injection
+Neutralinojs apps usually load globals and the client library using HTTP requests via the static server. This mechanism implements a generic way to enable the native API on all supported Neutralinojs app modes. However, this strategy prevents
+enabling the Neutralinojs native API if the primary web app is loaded through another server (local or remote). Now, app developers can inject globals and
+the client library script into external web services using `window.injectGlobals` and `window.injectClientLibrary` configuration options on the window mode.
+
+These options are available as CLI options as well (`--window-inject-globals` and `--window-inject-client-library`), so developers can use these options via the `window.create(url, options)` function. This code injection feature currently works with HTTP URLs only (can be used with local and remote HTTP web servers).
+
+### Preload script support
+The framework already lets developers set pre-defined global variables for each web page by using custom globals from the app configuration and activating the `window.injectGlobals` option. However, custom globals are static values, so app developers can't define dynamic values or run a custom JavaScript source using globals and `window.injectGlobals` features. This framework version implements the `window.injectScript` configuration option to inject and run custom JavaScript source file before running the primary webapp's JavaScript sources.
+
+For example, the following setup loads an initialization script from the `preload.js` file:
+
+```json
+"window": {
+  "injectScript": "/resources/js/preload.js"
+}
+```
+
+Developers can use native API calls within initialization scripts if `window.injectClientLibrary` is set to `true`. This option also can be set via `--window-inject-script` and `window.create(url, options)`.
+
+### Configuration
+- Implement the `dataLocation` config option to let users set data directory for framework data storage purposes, such as saving window state, storing extracted resources, etc. If `app` (default) is used, the framework will store app data within the app directory and if `system` is used, the framework will use a platform-specific data directory path (i.e., `/home/username/.local/share/<appId>` on GNU/Linux systems) to store app data. App developers can obtain the current data directory string from the `NL_DATAPATH` global variable.
+- Implement the `storageLocation` config option to let developers use system data directory for the Neutralinojs storage. If this option is 'app' (default), the framework store storage files within the app directory. If `system` is used, the framework will use the platform-specific standard data directory. In both `app` and `system` modes, the framework will use the `.storage` sub-directory for storage files.
+
+### Improvements/bugfixes
+- Search and load WebKitGtk functions dynamically from the available webkit2gtk library: `libwebkit2gtk-4.0-37` or `libwebkit2gtk-4.1-0`.
+- Fix the auto-reload issue during app development.
+
+## v5.4.0
+
+### API: resources
+- Implement `getFiles()`, `extractFile(path, dest)`, `readFile(path)`, and `readBinaryFile(path)` functions via the `resources` module for reading the files embedded in the `resources.neu` resources bundle. These functions works only if the framework loaded resources from the resource bundle -- they will throw `NE_RS_APIRQRF` if the framework loaded resources from the resources directory.
+
+### API: window
+- Implement `minimize()`, `unminimize()`, and `isMinimized()` functions to minimize and restore the native app window. 
+
+### Improvements/bugfixes
+
+- Fix issues with the `clipboard.writeImage()` function on Windows.
+- Fix the unwanted delay with the `window.exitProcessOnClose` configuration option on Windows.
+- Fix a bug with the `window.isFullScreen()` function on GNU/Linux-based platforms.
+- Fix duplicate virtual PID issues with the `os.spawnProcess()` function.
+
+## v5.3.0
+
+### Configuration: window transparency on Windows
+Window transparency support was added on the Windows version of the Neutralinojs framework. This can be activated with `modes.window.transparent` configuration property or `--window-transparent` command-line option. Unlike in other platforms, Windows native window becomes borderless (window controls will be hidden) with the activation of the transparent mode. 
+
+### API: os
+- Add the `temp` key for the supported directory list of the `os.getPath(pathKey)` function.
+
+### API: filesystem
+- Add the `filesystem.getAbsolutePath(path)` function to let developers get a full path string from a relative path string.
+- Add the `filesystem.getRelativePath(path, ?base)` function to get a relative path from a path and a base path.
+- Add the `filesystem.getPathParts(path)` to parse and get path segments like filename, extension, root path, etc. 
+
+### Improvements/bugfixes
+- Fix Unicode issues in the Windows version with filesystem, storage, and general modules.
+- Fix standard output/error data display issues on Windows
+
+## v5.2.0
+
+### Configuration: Configless framework initialization
+Now, developers can load the Neutralinojs framework without creating a `neutralino.config.json` file. Now, there is no mandatory configuration properties since Neutralinojs set reasonable defaults. Developers can launch the framework using the following methods without a configuration file:
+
+```bash
+# Loading a remote URL
+./framework-bin --url=https://neutralino.js.org/docs
+
+# Launches a local static web app
+./framework-bin --url="/resources/" --window-title="My web app" --enable-server
+```
+### Configuration
+- New internal CLI arguments added: `--single-page-serve`, `--enable-native-api` and `--document-root=<string>`
+
+### Core: Static server SPA (Single Page App) serving
+Earlier, Neutralinojs app developers had to use hash routing with their frontend-library-based apps since the internal static server didn't offer an inbuilt URL rewrite logic for SPAs (Single Page Apps). Now, they can use the `singlePageServe: true` option in the app configuration file to activate SPA routing. If this setting is on, the static server will serve the main `index.html` file when it receives directory requests that possibly send HTTP `404` status.
+
+For example, the `/invoices` path serves the main `index.html` file if there is no directory named `invoices` which holds an `index.html` file. 
+
+### API: window
+- Improve the behaviour of the `window.show()` function on Windows. Now, this function flashes the window if it's already in foreground and activates the window properly if it's minimized.
+
+### Improvements/bugfixes
+- Fix path issues with the `defaultPath` option in system file dialogs on Windows. 
+
+## v5.1.0
+
+### Configuration: window transparency
+Neutralinojs offers the inbuilt borderless mode and draggable region API to create custom window frames using HTML and CSS. Earlier, Neutralinojs used a default opaque color (usually white) for the window and webview layer, so app developers couldn't make custom CSS-styled window frames transparent or implement custom window frame shapes (i.e., rounded edges). Now, it offers the `window.transparent` boolean flag to activate window transparency. 
+
+If the transparency mode is on, the Neutralinojs window and webview use an alpha color layer and become transparent, so developers can use the `rgba` CSS color function on `body` background to handle the transparency level of the app. 
+
+The transparency mode can be activated using the `--window-transparent=<bool>` internal command-line option too.
+
+*Note: This feature is not implemented for the Windows operating system yet.* 
+
+### API: clipboard
+- Implement `clipboard.readImage()` and `clipboard.writeImage(image)` functions to work with clipboard image data.
+- Expose the `clipboard.clear()` function to clear system clipboard.
+- Expose the `clipboard.getFormat()` function to check the system clipboard data format. This function returns `text`, `image`, and `unknown` enum values based on existing data on the clipboard.
+
+## v5.0.0
+
+### API: Reading, writing with standard streams
+- Implement `app.readProcessInput(readAll=false)` for reading string data from the standard input stream. This function can read a single line or multiple lines at once.
+- Implement `app.writeProcessOutput` and `app.writeProcessError` for sending string data to standard output and error streams accordingly.
+
+### API: filesystem
+- Enable default recursive behavior in the `filesystem.createDirectory` function.
+- Add `filesystem.copy`, `filesystem.move`, and `filesystem.remove` functions.
+- Add `{recursive}` options object to `filesystem.readDirectory(path, options)` activate recursive directory listing.
+
+### API: os
+- Accept stdin with the background mode of the `os.execCommand` function.
+
+### Core: security
+- Now, all app clients and extensions require a valid connect token (A part of the `NL_TOKEN`) to connect to the Neutralinojs framework WebSocket server to receive app events.
+- The framework now sends the access token, connect token, port, and extension identifier to extension processes via the standard input, so other processes can't read them by scanning the process list.
+- The WebSocket client connection origin is checked during the HTTP/WS handshake to make sure that only local clients connect with a specific Neutralinojs app that runs on window, browser, or Chrome mode. Any URL origin is allowed for the cloud mode.
+- The above security enhancements fix two security advisories on GitHub. 
+
+### Global variables
+- Now the `NL_ARCH` global variable returns the same value that `computer.getArch` returns.
+
+### Deprecations
+- Removed `filesystem.removeFile`, `filesystem.removeDirectory`, `filesystem.copyFile`, and `filesystem.moveFile` functions.
+- Extensions won't receive `--nl-port`, `--nl-token`, and `--nl-extension-id` as command-line arguments. Now the framework sends these via stdin as a JSON string. 
+
 ## v4.15.0
 
 ### Configuration: custom user agent string

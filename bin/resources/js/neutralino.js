@@ -10,10 +10,14 @@ var Neutralino = (function (exports) {
             step((generator = generator.apply(thisArg, _arguments || [])).next());
         });
     }
+    typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+        var e = new Error(message);
+        return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+    };
 
     function dispatch$1(extensionId, event, data) {
         return new Promise((resolve, reject) => __awaiter(this, void 0, void 0, function* () {
-            let stats = yield getStats$1();
+            const stats = yield getStats$1();
             if (!stats.loaded.includes(extensionId)) {
                 reject({
                     code: 'NE_EX_EXTNOTL',
@@ -22,7 +26,7 @@ var Neutralino = (function (exports) {
             }
             else if (stats.connected.includes(extensionId)) {
                 try {
-                    let result = yield sendMessage('extensions.dispatch', { extensionId, event, data });
+                    const result = yield sendMessage('extensions.dispatch', { extensionId, event, data });
                     resolve(result);
                 }
                 catch (err) {
@@ -47,8 +51,8 @@ var Neutralino = (function (exports) {
 
     var extensions = {
         __proto__: null,
-        dispatch: dispatch$1,
         broadcast: broadcast$2,
+        dispatch: dispatch$1,
         getStats: getStats$1
     };
 
@@ -67,7 +71,7 @@ var Neutralino = (function (exports) {
         });
     }
     function dispatch(event, data) {
-        let customEvent = new CustomEvent(event, { detail: data });
+        const customEvent = new CustomEvent(event, { detail: data });
         window.dispatchEvent(customEvent);
         return Promise.resolve({
             success: true,
@@ -76,22 +80,33 @@ var Neutralino = (function (exports) {
     }
 
     function base64ToBytesArray(data) {
-        let binaryData = window.atob(data);
-        let len = binaryData.length;
-        let bytes = new Uint8Array(len);
+        const binaryData = window.atob(data);
+        const len = binaryData.length;
+        const bytes = new Uint8Array(len);
         for (let i = 0; i < len; i++) {
             bytes[i] = binaryData.charCodeAt(i);
         }
         return bytes.buffer;
     }
+    function arrayBufferToBase64(data) {
+        let bytes = new Uint8Array(data);
+        let asciiStr = '';
+        for (let byte of bytes) {
+            asciiStr += String.fromCharCode(byte);
+        }
+        return window.btoa(asciiStr);
+    }
 
     let ws;
-    let nativeCalls = {};
-    let offlineMessageQueue = [];
-    let extensionMessageQueue = {};
+    const nativeCalls = {};
+    const offlineMessageQueue = [];
+    const extensionMessageQueue = {};
     function init$1() {
         initAuth();
-        ws = new WebSocket(`ws://${window.location.hostname}:${window.NL_PORT}`);
+        const connectToken = getAuthToken().split('.')[1];
+        const hostname = (window.NL_GINJECTED || window.NL_CINJECTED) ?
+            'localhost' : window.location.hostname;
+        ws = new WebSocket(`ws://${hostname}:${window.NL_PORT}?connectToken=${connectToken}`);
         registerLibraryEvents();
         registerSocketEvents();
     }
@@ -129,8 +144,8 @@ var Neutralino = (function (exports) {
             if (!window.NL_EXTENABLED) {
                 return;
             }
-            let stats = yield getStats$1();
-            for (let extension of stats.connected) {
+            const stats = yield getStats$1();
+            for (const extension of stats.connected) {
                 dispatch('extensionReady', extension);
             }
         }));
@@ -156,10 +171,8 @@ var Neutralino = (function (exports) {
                 if ((_a = message.data) === null || _a === void 0 ? void 0 : _a.error) {
                     nativeCalls[message.id].reject(message.data.error);
                     if (message.data.error.code == 'NE_RT_INVTOKN') {
-                        // critical auth error
-                        // Perhaps, someone tried to open app from anoher client,
-                        // with 'one-time' token mode
-                        handleAuthError();
+                        // Invalid native method token
+                        handleNativeMethodTokenError();
                     }
                 }
                 else if ((_b = message.data) === null || _b === void 0 ? void 0 : _b.success) {
@@ -181,19 +194,22 @@ var Neutralino = (function (exports) {
             dispatch('ready');
         }));
         ws.addEventListener('close', (event) => __awaiter(this, void 0, void 0, function* () {
-            let error = {
+            const error = {
                 code: 'NE_CL_NSEROFF',
                 message: 'Neutralino server is offline. Try restarting the application'
             };
             dispatch('serverOffline', error);
         }));
+        ws.addEventListener('error', (event) => __awaiter(this, void 0, void 0, function* () {
+            handleConnectError();
+        }));
     }
     function processQueue(messageQueue) {
         return __awaiter(this, void 0, void 0, function* () {
             while (messageQueue.length > 0) {
-                let message = messageQueue.shift();
+                const message = messageQueue.shift();
                 try {
-                    let response = yield sendMessage(message.method, message.data);
+                    const response = yield sendMessage(message.method, message.data);
                     message.resolve(response);
                 }
                 catch (err) {
@@ -202,11 +218,16 @@ var Neutralino = (function (exports) {
             }
         });
     }
-    function handleAuthError() {
+    function handleNativeMethodTokenError() {
         ws.close();
         document.body.innerText = '';
-        document.write('<code>NE_RT_INVTOKN</code>: Neutralinojs application configuration' +
-            ' prevents accepting native calls from this client.');
+        document.write('<code>NE_RT_INVTOKN</code>: Neutralinojs application cannot' +
+            ' execute native methods since <code>NL_TOKEN</code> is invalid.');
+    }
+    function handleConnectError() {
+        document.body.innerText = '';
+        document.write('<code>NE_CL_IVCTOKN</code>: Neutralinojs application cannot' +
+            ' connect with the framework core using <code>NL_TOKEN</code>.');
     }
     function initAuth() {
         if (window.NL_TOKEN) {
@@ -224,8 +245,8 @@ var Neutralino = (function (exports) {
     function createDirectory(path) {
         return sendMessage('filesystem.createDirectory', { path });
     }
-    function removeDirectory(path) {
-        return sendMessage('filesystem.removeDirectory', { path });
+    function remove(path) {
+        return sendMessage('filesystem.remove', { path });
     }
     function writeFile(path, data) {
         return sendMessage('filesystem.writeFile', { path, data });
@@ -245,10 +266,10 @@ var Neutralino = (function (exports) {
             data: arrayBufferToBase64(data)
         });
     }
-    function readFile(path, options) {
+    function readFile$1(path, options) {
         return sendMessage('filesystem.readFile', Object.assign({ path }, options));
     }
-    function readBinaryFile(path, options) {
+    function readBinaryFile$1(path, options) {
         return new Promise((resolve, reject) => {
             sendMessage('filesystem.readBinaryFile', Object.assign({ path }, options))
                 .then((base64Data) => {
@@ -277,69 +298,53 @@ var Neutralino = (function (exports) {
     function getOpenedFileInfo(id) {
         return sendMessage('filesystem.getOpenedFileInfo', { id });
     }
-    function removeFile(path) {
-        return sendMessage('filesystem.removeFile', { path });
+    function readDirectory(path, options) {
+        return sendMessage('filesystem.readDirectory', Object.assign({ path }, options));
     }
-    function readDirectory(path) {
-        return sendMessage('filesystem.readDirectory', { path });
+    function copy(source, destination, options) {
+        return sendMessage('filesystem.copy', Object.assign({ source, destination }, options));
     }
-    function copyFile(source, destination) {
-        return sendMessage('filesystem.copyFile', { source, destination });
-    }
-    function moveFile(source, destination) {
-        return sendMessage('filesystem.moveFile', { source, destination });
+    function move$1(source, destination) {
+        return sendMessage('filesystem.move', { source, destination });
     }
     function getStats(path) {
         return sendMessage('filesystem.getStats', { path });
     }
-    function arrayBufferToBase64(data) {
-        let bytes = new Uint8Array(data);
-        let asciiStr = '';
-        for (let byte of bytes) {
-            asciiStr += String.fromCharCode(byte);
-        }
-        return window.btoa(asciiStr);
+    function getAbsolutePath(path) {
+        return sendMessage('filesystem.getAbsolutePath', { path });
+    }
+    function getRelativePath(path, base) {
+        return sendMessage('filesystem.getRelativePath', { path, base });
+    }
+    function getPathParts(path) {
+        return sendMessage('filesystem.getPathParts', { path });
     }
 
     var filesystem = {
         __proto__: null,
-        createDirectory: createDirectory,
-        removeDirectory: removeDirectory,
-        writeFile: writeFile,
-        appendFile: appendFile,
-        writeBinaryFile: writeBinaryFile,
         appendBinaryFile: appendBinaryFile,
-        readFile: readFile,
-        readBinaryFile: readBinaryFile,
-        openFile: openFile,
+        appendFile: appendFile,
+        copy: copy,
+        createDirectory: createDirectory,
         createWatcher: createWatcher,
-        removeWatcher: removeWatcher,
-        getWatchers: getWatchers,
-        updateOpenedFile: updateOpenedFile,
+        getAbsolutePath: getAbsolutePath,
         getOpenedFileInfo: getOpenedFileInfo,
-        removeFile: removeFile,
+        getPathParts: getPathParts,
+        getRelativePath: getRelativePath,
+        getStats: getStats,
+        getWatchers: getWatchers,
+        move: move$1,
+        openFile: openFile,
+        readBinaryFile: readBinaryFile$1,
         readDirectory: readDirectory,
-        copyFile: copyFile,
-        moveFile: moveFile,
-        getStats: getStats
+        readFile: readFile$1,
+        remove: remove,
+        removeWatcher: removeWatcher,
+        updateOpenedFile: updateOpenedFile,
+        writeBinaryFile: writeBinaryFile,
+        writeFile: writeFile
     };
 
-    var Icon;
-    (function (Icon) {
-        Icon["WARNING"] = "WARNING";
-        Icon["ERROR"] = "ERROR";
-        Icon["INFO"] = "INFO";
-        Icon["QUESTION"] = "QUESTION";
-    })(Icon || (Icon = {}));
-    var MessageBoxChoice;
-    (function (MessageBoxChoice) {
-        MessageBoxChoice["OK"] = "OK";
-        MessageBoxChoice["OK_CANCEL"] = "OK_CANCEL";
-        MessageBoxChoice["YES_NO"] = "YES_NO";
-        MessageBoxChoice["YES_NO_CANCEL"] = "YES_NO_CANCEL";
-        MessageBoxChoice["RETRY_CANCEL"] = "RETRY_CANCEL";
-        MessageBoxChoice["ABORT_RETRY_IGNORE"] = "ABORT_RETRY_IGNORE";
-    })(MessageBoxChoice || (MessageBoxChoice = {}));
     function execCommand(command, options) {
         return sendMessage('os.execCommand', Object.assign({ command }, options));
     }
@@ -385,22 +390,20 @@ var Neutralino = (function (exports) {
 
     var os = {
         __proto__: null,
-        get Icon () { return Icon; },
-        get MessageBoxChoice () { return MessageBoxChoice; },
         execCommand: execCommand,
-        spawnProcess: spawnProcess,
-        updateSpawnedProcess: updateSpawnedProcess,
-        getSpawnedProcesses: getSpawnedProcesses,
         getEnv: getEnv,
         getEnvs: getEnvs,
-        showOpenDialog: showOpenDialog,
-        showFolderDialog: showFolderDialog,
-        showSaveDialog: showSaveDialog,
-        showNotification: showNotification,
-        showMessageBox: showMessageBox,
-        setTray: setTray,
+        getPath: getPath,
+        getSpawnedProcesses: getSpawnedProcesses,
         open: open,
-        getPath: getPath
+        setTray: setTray,
+        showFolderDialog: showFolderDialog,
+        showMessageBox: showMessageBox,
+        showNotification: showNotification,
+        showOpenDialog: showOpenDialog,
+        showSaveDialog: showSaveDialog,
+        spawnProcess: spawnProcess,
+        updateSpawnedProcess: updateSpawnedProcess
     };
 
     function getMemoryInfo() {
@@ -427,13 +430,13 @@ var Neutralino = (function (exports) {
 
     var computer = {
         __proto__: null,
-        getMemoryInfo: getMemoryInfo,
         getArch: getArch,
-        getKernelInfo: getKernelInfo,
-        getOSInfo: getOSInfo,
         getCPUInfo: getCPUInfo,
         getDisplays: getDisplays,
-        getMousePosition: getMousePosition
+        getKernelInfo: getKernelInfo,
+        getMemoryInfo: getMemoryInfo,
+        getMousePosition: getMousePosition,
+        getOSInfo: getOSInfo
     };
 
     function setData(key, data) {
@@ -448,24 +451,17 @@ var Neutralino = (function (exports) {
 
     var storage = {
         __proto__: null,
-        setData: setData,
         getData: getData,
-        getKeys: getKeys
+        getKeys: getKeys,
+        setData: setData
     };
 
-    var LoggerType;
-    (function (LoggerType) {
-        LoggerType["WARNING"] = "WARNING";
-        LoggerType["ERROR"] = "ERROR";
-        LoggerType["INFO"] = "INFO";
-    })(LoggerType || (LoggerType = {}));
     function log(message, type) {
         return sendMessage('debug.log', { message, type });
     }
 
     var debug = {
         __proto__: null,
-        get LoggerType () { return LoggerType; },
         log: log
     };
 
@@ -498,14 +494,26 @@ var Neutralino = (function (exports) {
     function broadcast$1(event, data) {
         return sendMessage('app.broadcast', { event, data });
     }
+    function readProcessInput(readAll) {
+        return sendMessage('app.readProcessInput', { readAll });
+    }
+    function writeProcessOutput(data) {
+        return sendMessage('app.writeProcessOutput', { data });
+    }
+    function writeProcessError(data) {
+        return sendMessage('app.writeProcessError', { data });
+    }
 
     var app = {
         __proto__: null,
+        broadcast: broadcast$1,
         exit: exit,
-        killProcess: killProcess,
-        restartProcess: restartProcess,
         getConfig: getConfig,
-        broadcast: broadcast$1
+        killProcess: killProcess,
+        readProcessInput: readProcessInput,
+        restartProcess: restartProcess,
+        writeProcessError: writeProcessError,
+        writeProcessOutput: writeProcessOutput
     };
 
     const draggableRegions = new WeakMap();
@@ -526,6 +534,12 @@ var Neutralino = (function (exports) {
     }
     function minimize() {
         return sendMessage('window.minimize');
+    }
+    function unminimize() {
+        return sendMessage('window.unminimize');
+    }
+    function isMinimized() {
+        return sendMessage('window.isMinimized');
     }
     function setFullScreen() {
         return sendMessage('window.setFullScreen');
@@ -557,15 +571,16 @@ var Neutralino = (function (exports) {
     function center() {
         return sendMessage('window.center');
     }
-    function setDraggableRegion(domElementOrId) {
+    function setDraggableRegion(domElementOrId, options = {}) {
         return new Promise((resolve, reject) => {
             const draggableRegion = domElementOrId instanceof Element ?
                 domElementOrId : document.getElementById(domElementOrId);
             let initialClientX = 0;
             let initialClientY = 0;
             let absDragMovementDistance = 0;
-            let isPointerCaptured = false;
+            let shouldReposition = false;
             let lastMoveTimestamp = performance.now();
+            let isPointerCaptured = options.alwaysCapture;
             if (!draggableRegion) {
                 return reject({
                     code: 'NE_WD_DOMNOTF',
@@ -580,29 +595,35 @@ var Neutralino = (function (exports) {
             }
             draggableRegion.addEventListener('pointerdown', startPointerCapturing);
             draggableRegion.addEventListener('pointerup', endPointerCapturing);
+            draggableRegion.addEventListener('pointercancel', endPointerCapturing);
             draggableRegions.set(draggableRegion, { pointerdown: startPointerCapturing, pointerup: endPointerCapturing });
             function onPointerMove(evt) {
                 return __awaiter(this, void 0, void 0, function* () {
-                    if (isPointerCaptured) {
+                    var _a;
+                    // Get absolute drag distance from the starting point
+                    const dx = evt.clientX - initialClientX, dy = evt.clientY - initialClientY;
+                    absDragMovementDistance = Math.sqrt(dx * dx + dy * dy);
+                    // Only start pointer capturing when the user dragged more than a certain amount of distance
+                    // This ensures that the user can also click on the dragable area, e.g. if the area is menu / navbar
+                    if (absDragMovementDistance >= ((_a = options.dragMinDistance) !== null && _a !== void 0 ? _a : 10)) {
+                        shouldReposition = true;
+                        if (!isPointerCaptured) {
+                            draggableRegion.setPointerCapture(evt.pointerId);
+                            isPointerCaptured = true;
+                        }
+                    }
+                    if (shouldReposition) {
                         const currentMilliseconds = performance.now();
                         const timeTillLastMove = currentMilliseconds - lastMoveTimestamp;
                         // Limit move calls to 1 per every 5ms - TODO: introduce constant instead of magic number?
                         if (timeTillLastMove < 5) {
-                            // Do not execute move more often than 1x every 5ms or performance will drop 
+                            // Do not execute move more often than 1x every 5ms or performance will drop
                             return;
                         }
                         // Store current time minus the offset
                         lastMoveTimestamp = currentMilliseconds - (timeTillLastMove - 5);
                         yield move(evt.screenX - initialClientX, evt.screenY - initialClientY);
                         return;
-                    }
-                    // Add absolute drag distance 
-                    absDragMovementDistance = Math.sqrt(evt.movementX * evt.movementX + evt.movementY * evt.movementY);
-                    // Only start pointer capturing when the user dragged more than a certain amount of distance 
-                    // This ensures that the user can also click on the dragable area, e.g. if the area is menu / navbar
-                    if (absDragMovementDistance >= 10) { // TODO: introduce constant instead of magic number? 
-                        isPointerCaptured = true;
-                        draggableRegion.setPointerCapture(evt.pointerId);
                     }
                 });
             }
@@ -612,6 +633,9 @@ var Neutralino = (function (exports) {
                 initialClientX = evt.clientX;
                 initialClientY = evt.clientY;
                 draggableRegion.addEventListener('pointermove', onPointerMove);
+                if (options.alwaysCapture) {
+                    draggableRegion.setPointerCapture(evt.pointerId);
+                }
             }
             function endPointerCapturing(evt) {
                 draggableRegion.removeEventListener('pointermove', onPointerMove);
@@ -642,6 +666,7 @@ var Neutralino = (function (exports) {
             const { pointerdown, pointerup } = draggableRegions.get(draggableRegion);
             draggableRegion.removeEventListener('pointerdown', pointerdown);
             draggableRegion.removeEventListener('pointerup', pointerup);
+            draggableRegion.removeEventListener('pointercancel', pointerup);
             draggableRegions.delete(draggableRegion);
             resolve({
                 success: true,
@@ -695,7 +720,7 @@ var Neutralino = (function (exports) {
             for (let key in options) {
                 if (key == "processArgs")
                     continue;
-                let cliKey = key.replace(/[A-Z]|^[a-z]/g, (token) => ("-" + token.toLowerCase()));
+                let cliKey = '-' + key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
                 command += ` --window${cliKey}=${normalize(options[key])}`;
             }
             if (options && options.processArgs)
@@ -712,29 +737,31 @@ var Neutralino = (function (exports) {
 
     var window$1 = {
         __proto__: null,
-        setTitle: setTitle,
-        getTitle: getTitle,
-        maximize: maximize,
-        unmaximize: unmaximize,
-        isMaximized: isMaximized,
-        minimize: minimize,
-        setFullScreen: setFullScreen,
-        exitFullScreen: exitFullScreen,
-        isFullScreen: isFullScreen,
-        show: show,
-        hide: hide,
-        isVisible: isVisible,
-        focus: focus,
-        setIcon: setIcon,
-        move: move,
         center: center,
-        setDraggableRegion: setDraggableRegion,
-        unsetDraggableRegion: unsetDraggableRegion,
-        setSize: setSize,
-        getSize: getSize,
+        create: create,
+        exitFullScreen: exitFullScreen,
+        focus: focus,
         getPosition: getPosition,
+        getSize: getSize,
+        getTitle: getTitle,
+        hide: hide,
+        isFullScreen: isFullScreen,
+        isMaximized: isMaximized,
+        isMinimized: isMinimized,
+        isVisible: isVisible,
+        maximize: maximize,
+        minimize: minimize,
+        move: move,
         setAlwaysOnTop: setAlwaysOnTop,
-        create: create
+        setDraggableRegion: setDraggableRegion,
+        setFullScreen: setFullScreen,
+        setIcon: setIcon,
+        setSize: setSize,
+        setTitle: setTitle,
+        show: show,
+        unmaximize: unmaximize,
+        unminimize: unminimize,
+        unsetDraggableRegion: unsetDraggableRegion
     };
 
     function broadcast(event, data) {
@@ -744,9 +771,9 @@ var Neutralino = (function (exports) {
     var events = {
         __proto__: null,
         broadcast: broadcast,
-        on: on,
+        dispatch: dispatch,
         off: off,
-        dispatch: dispatch
+        on: on
     };
 
     let manifest = null;
@@ -766,7 +793,7 @@ var Neutralino = (function (exports) {
                 });
             }
             try {
-                let response = yield fetch(url);
+                const response = yield fetch(url);
                 manifest = JSON.parse(yield response.text());
                 if (isValidManifest(manifest)) {
                     resolve(manifest);
@@ -795,8 +822,8 @@ var Neutralino = (function (exports) {
                 });
             }
             try {
-                let response = yield fetch(manifest.resourcesURL);
-                let resourcesBuffer = yield response.arrayBuffer();
+                const response = yield fetch(manifest.resourcesURL);
+                const resourcesBuffer = yield response.arrayBuffer();
                 yield writeBinaryFile(window.NL_PATH + "/resources.neu", resourcesBuffer);
                 resolve({
                     success: true,
@@ -818,17 +845,77 @@ var Neutralino = (function (exports) {
         install: install
     };
 
-    function readText(key, data) {
-        return sendMessage('clipboard.readText', { key, data });
+    function getFormat() {
+        return sendMessage('clipboard.getFormat');
+    }
+    function readText() {
+        return sendMessage('clipboard.readText');
+    }
+    function readImage() {
+        return new Promise((resolve, reject) => {
+            sendMessage('clipboard.readImage')
+                .then((image) => {
+                if (image) {
+                    image.data = base64ToBytesArray(image.data);
+                }
+                resolve(image);
+            })
+                .catch((error) => {
+                reject(error);
+            });
+        });
     }
     function writeText(data) {
         return sendMessage('clipboard.writeText', { data });
     }
+    function writeImage(image) {
+        const props = Object.assign({}, image);
+        if (image === null || image === void 0 ? void 0 : image.data) {
+            props.data = arrayBufferToBase64(image.data);
+        }
+        return sendMessage('clipboard.writeImage', props);
+    }
+    function clear() {
+        return sendMessage('clipboard.clear');
+    }
 
     var clipboard = {
         __proto__: null,
+        clear: clear,
+        getFormat: getFormat,
+        readImage: readImage,
         readText: readText,
+        writeImage: writeImage,
         writeText: writeText
+    };
+
+    function getFiles() {
+        return sendMessage('resources.getFiles');
+    }
+    function extractFile(path, destination) {
+        return sendMessage('resources.extractFile', { path, destination });
+    }
+    function readFile(path) {
+        return sendMessage('resources.readFile', { path });
+    }
+    function readBinaryFile(path) {
+        return new Promise((resolve, reject) => {
+            sendMessage('resources.readBinaryFile', { path })
+                .then((base64Data) => {
+                resolve(base64ToBytesArray(base64Data));
+            })
+                .catch((error) => {
+                reject(error);
+            });
+        });
+    }
+
+    var resources = {
+        __proto__: null,
+        extractFile: extractFile,
+        getFiles: getFiles,
+        readBinaryFile: readBinaryFile,
+        readFile: readFile
     };
 
     function getMethods() {
@@ -840,7 +927,7 @@ var Neutralino = (function (exports) {
         getMethods: getMethods
     };
 
-    var version = "3.12.0";
+    var version = "5.5.0";
 
     let initialized = false;
     function init(options = {}) {
@@ -856,10 +943,10 @@ var Neutralino = (function (exports) {
             }));
         }
         if (options.exportCustomMethods && window.NL_CMETHODS && window.NL_CMETHODS.length > 0) {
-            for (let method of window.NL_CMETHODS) {
+            for (const method of window.NL_CMETHODS) {
                 Neutralino.custom[method] = (...args) => {
                     let data = {};
-                    for (let [argi, argv] of args.entries()) {
+                    for (const [argi, argv] of args.entries()) {
                         if (typeof argv == 'object' && !Array.isArray(argv) && argv != null) {
                             data = Object.assign(Object.assign({}, data), argv);
                         }
@@ -872,7 +959,7 @@ var Neutralino = (function (exports) {
             }
         }
         window.NL_CVERSION = version;
-        window.NL_CCOMMIT = '57919080e8f792b034dba5ca677e19420d7b0201'; // only the build server will update this
+        window.NL_CCOMMIT = '425c526c318342e0e5d0f17caceef2a53049eda4'; // only the build server will update this
         initialized = true;
     }
 
@@ -886,6 +973,7 @@ var Neutralino = (function (exports) {
     exports.filesystem = filesystem;
     exports.init = init;
     exports.os = os;
+    exports.resources = resources;
     exports.storage = storage;
     exports.updater = updater;
     exports.window = window$1;
@@ -893,5 +981,6 @@ var Neutralino = (function (exports) {
     return exports;
 
 })({});
+//# sourceMappingURL=neutralino.js.map
 
 //# sourceMappingURL=neutralino.js.map

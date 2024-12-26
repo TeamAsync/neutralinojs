@@ -29,12 +29,11 @@ enum StatusCode {
     // filesystem
     NE_FS_FILWRER,
     NE_FS_DIRCRER,
-    NE_FS_RMDIRER,
+    NE_FS_REMVERR,
     NE_FS_FILRDER,
-    NE_FS_FILRMER,
     NE_FS_NOPATHE,
-    NE_FS_COPYFER,
-    NE_FS_MOVEFER,
+    NE_FS_COPYERR,
+    NE_FS_MOVEERR,
     NE_FS_FILOPER,
     NE_FS_UNLTOUP,
     NE_FS_UNLTFOP,
@@ -51,11 +50,14 @@ enum StatusCode {
     // resources
     NE_RS_TREEGER,
     NE_RS_UNBLDRE,
+    NE_RS_APIRQRF,
+    NE_RS_FILNOTF,
     // server
     NE_SR_UNBSEND,
     NE_SR_UNBPARS,
     // config
     NE_CF_UNBLDCF,
+    NE_CF_UNBPRCF,
     NE_CF_UNSUPMD
 };
 

@@ -7,7 +7,7 @@
 #include "settings.h"
 #include "helpers.h"
 #include "api/os/os.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -109,7 +109,7 @@ void init(const json &input) {
 
     chromeCmd += " " + __getDefaultChromeArgs();
 
-    chromeCmd += " --user-data-dir=\"" + settings::joinAppPath("/.tmp/chromedata") + "\"";
+    chromeCmd += " --user-data-dir=\"" + settings::joinAppDataPath("/.tmp/chromedata") + "\"";
     chromeCmd += " --app=\"" + input["url"].get<string>() + "\"";
 
     if(helpers::hasRequiredFields(input, {"width", "height"})) {

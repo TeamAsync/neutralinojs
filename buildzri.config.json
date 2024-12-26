@@ -1,7 +1,7 @@
 {
     "std": "c++17",
     "name": "Neutralinojs",
-    "version": "4.15.0",
+    "version": "5.5.0",
     "output": "./bin/neutralino-${BZ_OS}_${BZ_TARGET_ARCH}",
     "include": {
         "*": [
@@ -38,6 +38,7 @@
         "darwin": [
             "lib/tinyprocess/process_unix.cpp",
             "lib/clip/clip_osx.mm",
+            "lib/webview/macwindow.mm",
             "lib/efsw/src/efsw/platform/posix/*.cpp"
         ],
         "windows": [
@@ -48,8 +49,10 @@
     },
     "options": {
         "linux": [
-            "$(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0 glib-2.0 xcb x11 xrandr)",
+            "$(pkg-config --cflags --libs gtk+-3.0 glib-2.0 xcb x11 xrandr)",
             "-pthread",
+            "-lpng",
+            "-lstdc++fs",
             "-ldl",
             "-no-pie",
             "-Os"
@@ -75,12 +78,14 @@
             "ELPP_NO_DEFAULT_LOG_FILE=1",
             "ASIO_STANDALONE",
             "INFOWARE_VERSION=\\\"0.6.0\\\"",
-            "INFOWARE_USE_X11"
+            "INFOWARE_USE_X11",
+            "CLIP_ENABLE_IMAGE"
         ],
         "linux": [
             "HAVE_XCB_XLIB_H",
             "WEBVIEW_GTK=1",
-            "TRAY_APPINDICATOR=1"
+            "TRAY_APPINDICATOR=1",
+            "HAVE_PNG_H"
         ],
         "darwin": [
             "WEBVIEW_COCOA=1",

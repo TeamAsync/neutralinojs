@@ -8,11 +8,14 @@
     "documentRoot": "/resources/",
     "enableServer": true,
     "tokenSecurity": "one-time",
+    "storageLocation": "system",
+    "dataLocation": "app",
     "enableNativeAPI": true,
     "exportAuthInfo": false,
     "serverHeaders": {
         "Test-Header-Option": "Test Value"
     },
+    "singlePageServe": false,
     "logging": {
         "enabled": true,
         "writeToLogFile": true
@@ -44,10 +47,13 @@
             "maximize": false,
             "hidden": false,
             "resizable": true,
+            "transparent": false,
             "exitProcessOnClose": false,
             "useSavedState": true,
             "port": 0,
-            "extendUserAgentWith": "NeutralinojsSampleApp"
+            "extendUserAgentWith": "NeutralinojsSampleApp",
+            "injectGlobals": false,
+            "injectClientLibrary": false
         },
         "browser": {
             "globalVariables": {
@@ -75,7 +81,7 @@
     "extensions": [
         {
             "id": "js.neutralino.sampleextension",
-            "commandLinux": "node ${NL_PATH}/extensions/sample extension/main.js --linux",
+            "commandLinux": "node ${NL_PATH}/extensions/sampleextension/main.js --linux",
             "commandDarwin": "node ${NL_PATH}/extensions/sampleextension/main.js --darwin",
             "commandWindows": "node ${NL_PATH}/extensions/sampleextension/main.js --windows"
         },

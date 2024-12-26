@@ -47,6 +47,7 @@ struct FileStats {
 
 struct DirReaderEntry {
     string name;
+    string path;
     fs::EntryType type = fs::EntryTypeOther;
 };
 
@@ -55,24 +56,21 @@ struct DirReaderResult {
     vector<DirReaderEntry> entries;
 };
 
-bool createDirectory(const string &path);
-bool removeFile(const string &filename);
 fs::FileReaderResult readFile(const string &filename, const fs::FileReaderOptions &fileReaderOptions = {});
 bool writeFile(const fs::FileWriterOptions &fileWriterOptions);
 string getDirectoryName(const string &filename);
 string getCurrentDirectory();
-string getFullPathFromRelative(const string &path);
 int openFile(const string &path);
 bool updateOpenedFile(const OpenedFileEvent &evt);
 long createWatcher(const string &path);
 bool removeWatcher(long watcherId);
 fs::FileStats getStats(const string &path);
-fs::DirReaderResult readDirectory(const string &path);
+fs::DirReaderResult readDirectory(const string &path, bool recursive = false);
 
 namespace controllers {
 
 json createDirectory(const json &input);
-json removeDirectory(const json &input);
+json remove(const json &input);
 json writeFile(const json &input);
 json writeBinaryFile(const json &input);
 json appendFile(const json &input);
@@ -82,14 +80,16 @@ json readBinaryFile(const json &input);
 json openFile(const json &input);
 json updateOpenedFile(const json &input);
 json getOpenedFileInfo(const json &input);
-json removeFile(const json &input);
 json readDirectory(const json &input);
-json copyFile(const json &input);
-json moveFile(const json &input);
+json copy(const json &input);
+json move(const json &input);
 json getStats(const json &input);
 json createWatcher(const json &input);
 json removeWatcher(const json &input);
 json getWatchers(const json &input);
+json getAbsolutePath(const json &input);
+json getRelativePath(const json &input);
+json getPathParts(const json &input);
 
 } // namespace controllers
 

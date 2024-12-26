@@ -15,7 +15,7 @@
 #include "settings.h"
 #include "resources.h"
 #include "api/os/os.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 #include "api/computer/computer.h"
 #include "api/storage/storage.h"
 #include "api/debug/debug.h"
@@ -24,6 +24,7 @@
 #include "api/events/events.h"
 #include "api/extensions/extensions.h"
 #include "api/clipboard/clipboard.h"
+#include "api/res/res.h"
 #include "api/custom/custom.h"
 
 #if defined(__APPLE__)
@@ -42,6 +43,9 @@ map<string, router::NativeMethod> methodMap = {
     {"app.killProcess", app::controllers::killProcess},
     {"app.getConfig", app::controllers::getConfig},
     {"app.broadcast", app::controllers::broadcast},
+    {"app.readProcessInput", app::controllers::readProcessInput},
+    {"app.writeProcessOutput", app::controllers::writeProcessOutput},
+    {"app.writeProcessError", app::controllers::writeProcessError},
     // Neutralino.window
     {"window.setTitle", window::controllers::setTitle},
     {"window.getTitle", window::controllers::getTitle},
@@ -49,6 +53,8 @@ map<string, router::NativeMethod> methodMap = {
     {"window.isMaximized", window::controllers::isMaximized},
     {"window.unmaximize", window::controllers::unmaximize},
     {"window.minimize", window::controllers::minimize},
+    {"window.unminimize", window::controllers::unminimize},
+    {"window.isMinimized", window::controllers::isMinimized},
     {"window.isVisible", window::controllers::isVisible},
     {"window.show", window::controllers::show},
     {"window.hide", window::controllers::hide},
@@ -75,7 +81,7 @@ map<string, router::NativeMethod> methodMap = {
     {"debug.log", debug::controllers::log},
     // Neutralino.filesystem
     {"filesystem.createDirectory", fs::controllers::createDirectory},
-    {"filesystem.removeDirectory", fs::controllers::removeDirectory},
+    {"filesystem.remove", fs::controllers::remove},
     {"filesystem.readFile", fs::controllers::readFile},
     {"filesystem.readBinaryFile", fs::controllers::readBinaryFile},
     {"filesystem.writeFile", fs::controllers::writeFile},
@@ -88,11 +94,13 @@ map<string, router::NativeMethod> methodMap = {
     {"filesystem.getWatchers", fs::controllers::getWatchers},
     {"filesystem.updateOpenedFile", fs::controllers::updateOpenedFile},
     {"filesystem.getOpenedFileInfo", fs::controllers::getOpenedFileInfo},
-    {"filesystem.removeFile", fs::controllers::removeFile},
     {"filesystem.readDirectory", fs::controllers::readDirectory},
-    {"filesystem.copyFile", fs::controllers::copyFile},
-    {"filesystem.moveFile", fs::controllers::moveFile},
+    {"filesystem.copy", fs::controllers::copy},
+    {"filesystem.move", fs::controllers::move},
     {"filesystem.getStats", fs::controllers::getStats},
+    {"filesystem.getAbsolutePath", fs::controllers::getAbsolutePath},
+    {"filesystem.getRelativePath", fs::controllers::getRelativePath},
+    {"filesystem.getPathParts", fs::controllers::getPathParts},
     // Neutralino.os
     {"os.execCommand", os::controllers::execCommand},
     {"os.spawnProcess", os::controllers::spawnProcess},
@@ -119,8 +127,17 @@ map<string, router::NativeMethod> methodMap = {
     {"extensions.broadcast", extensions::controllers::broadcast},
     {"extensions.getStats", extensions::controllers::getStats},
     // Neutralino.clipboard
+    {"clipboard.getFormat", clipboard::controllers::getFormat},
     {"clipboard.readText", clipboard::controllers::readText},
+    {"clipboard.readImage", clipboard::controllers::readImage},
     {"clipboard.writeText", clipboard::controllers::writeText},
+    {"clipboard.writeImage", clipboard::controllers::writeImage},
+    {"clipboard.clear", clipboard::controllers::clear},
+    // Neutralino.resources
+    {"resources.getFiles", res::controllers::getFiles},
+    {"resources.extractFile", res::controllers::extractFile},
+    {"resources.readFile", res::controllers::readFile},
+    {"resources.readBinaryFile", res::controllers::readBinaryFile},
     // Neutralino.custom
     {"custom.getMethods", custom::controllers::getMethods},
     // {"custom.add", custom::controllers::add} // Sample custom method
@@ -194,11 +211,13 @@ router::NativeMessage executeNativeMethod(const router::NativeMessage &request) 
 router::Response getAsset(string path, const string &prependData) {
     router::Response response;
     vector<string> split = helpers::split(path, '.');
+
     if(split.size() < 2) {
         if(path.back() != '/')
             path += "/";
         return getAsset(path + "index.html", prependData);
     }
+
     string extension = split[split.size() - 1];
     map<string, string> mimeTypes = {
         // Plain text files
@@ -255,13 +274,29 @@ router::Response getAsset(string path, const string &prependData) {
 
     fs::FileReaderResult fileReaderResult = resources::getFile(path);
     if(fileReaderResult.status != errors::NE_ST_OK) {
-        debug::log(debug::LogTypeError, errors::makeErrorMsg(errors::NE_RS_UNBLDRE, path));
+        json jSpaServing = settings::getOptionForCurrentMode("singlePageServe");
+        if(!jSpaServing.is_null() && jSpaServing.get<bool>() && regex_match(path, regex(".*index.html$"))) {
+            json jDocumentRoot = settings::getOptionForCurrentMode("documentRoot");
+            string newPath;
+            if(!jDocumentRoot.is_null()) {
+                newPath = jDocumentRoot.get<string>() + "index.html";
+            }
+            else {
+                newPath = settings::getNavigationUrl();
+            }
+            if(newPath != path) return getAsset(newPath, prependData);
+        }
     }
     response.data = fileReaderResult.data;
-    response.status = fileReaderResult.status != errors::NE_ST_OK ? websocketpp::http::status_code::not_found
-                                : websocketpp::http::status_code::ok;
-    if(fileReaderResult.status == errors::NE_ST_OK && prependData != "")
+    response.status = websocketpp::http::status_code::ok;
+
+    if(fileReaderResult.status != errors::NE_ST_OK) {
+        response.status = websocketpp::http::status_code::not_found;
+        debug::log(debug::LogTypeError, errors::makeErrorMsg(errors::NE_RS_UNBLDRE, path));
+    }
+    else if(prependData != "") {
         response.data = prependData + response.data;
+    }
 
     // If MIME-type is not defined in neuserver, application/octet-stream will be used by default.
     if(mimeTypes.find(extension) != mimeTypes.end()) {

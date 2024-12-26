@@ -21,6 +21,7 @@
 #include "api/window/window.h"
 #include "api/os/os.h"
 #include "api/debug/debug.h"
+#include "api/storage/storage.h"
 
 #define NEU_APP_LOG_FILE "/neutralinojs.log"
 #define NEU_APP_LOG_FORMAT "%level %datetime %msg %loc %user@%host"
@@ -54,7 +55,7 @@ void __startApp() {
             break;
         case settings::AppModeCloud:
             if(neuserver::isInitialized()) {
-                debug::log(debug::LogTypeInfo, options["applicationId"].get<string>() +
+                debug::log(debug::LogTypeInfo, settings::getAppId() +
                         " is available at " + navigationUrl);
             }
             __wait();
@@ -88,7 +89,7 @@ void __configureLogger() {
 
     if(enableLogFile) {
         defaultConf.setGlobally(
-                el::ConfigurationType::Filename, settings::joinAppPath(NEU_APP_LOG_FILE));
+                el::ConfigurationType::Filename, settings::joinAppDataPath(NEU_APP_LOG_FILE));
     }
     defaultConf.setGlobally(
             el::ConfigurationType::ToFile, enableLogFile ? "true" : "false");
@@ -99,7 +100,7 @@ void __configureLogger() {
 }
 
 void __startServerAsync() {
-    navigationUrl = settings::getOptionForCurrentMode("url").get<string>();
+    navigationUrl = settings::getNavigationUrl();
     json jEnableServer = settings::getOptionForCurrentMode("enableServer");
 
     if(!jEnableServer.is_null() && jEnableServer.get<bool>()) {
@@ -125,27 +126,17 @@ void __startServerAsync() {
 void __initFramework(const json &args) {
     settings::setGlobalArgs(args);
     resources::init();
-    json options = settings::getConfig();
-
-    if(options.is_null()) {
-        pfd::message("Unable to load app configuration",
-                        settings::getConfigFile() + " file is missing or corrupted.",
-                        pfd::choice::ok,
-                        pfd::icon::error);
+    bool settingsStatus = settings::init();
+    if(!settingsStatus) {
+        pfd::message("Unable to load configuration",
+            "The application configuration file cannot be loaded due to a JSON parsing error.",
+            pfd::choice::ok,
+            pfd::icon::error);
         std::exit(1);
     }
-
-    if(options["applicationId"].is_null() || options["defaultMode"].is_null()
-        || settings::getOptionForCurrentMode("url").is_null()) {
-        pfd::message("Missing mandatory configuration",
-                        "Neutralinojs app config should contain applicationId, defaultMode, and url.",
-                        pfd::choice::ok,
-                        pfd::icon::error);
-        std::exit(1);
-    }
-
     authbasic::init();
     permission::init();
+    storage::init();
 }
 
 void __initExtra() {
@@ -169,9 +160,18 @@ void __initExtra() {
 }
 
 #if defined(_WIN32)
+void __attachConsole() {
+    FILE* fp;
+    if(AttachConsole(ATTACH_PARENT_PROCESS)) { 
+        freopen_s(&fp, "CONIN$", "r", stdin);
+        freopen_s(&fp, "CONOUT$", "w", stdout);
+        freopen_s(&fp, "CONOUT$", "w", stderr);
+    }
+}
+
 #define ARG_C __argc
 #define ARG_V __wargv
-#define CONVSTR(S) helpers::wcstr2str(S)
+#define CONVWCSTR(S) helpers::wcstr2str(S)
 int APIENTRY wWinMain(HINSTANCE hInstance,
                       HINSTANCE hPrevInstance,
                       LPTSTR    lpCmdLine,
@@ -179,14 +179,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
 #elif defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
 #define ARG_C argc
 #define ARG_V argv
-#define CONVSTR(S) S
+#define CONVWCSTR(S) S
 int main(int argc, char ** argv)
 #endif
                                  {
     json args;
     for (int i = 0; i < ARG_C; i++) {
-        args.push_back(CONVSTR(ARG_V[i]));
+        args.push_back(CONVWCSTR(ARG_V[i]));
     }
+    #if defined(_WIN32)
+    __attachConsole();
+    #endif
     __initFramework(args);
     __startServerAsync();
     __configureLogger();

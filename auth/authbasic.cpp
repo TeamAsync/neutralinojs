@@ -1,9 +1,11 @@
 #include <string>
+#include <filesystem>
+#include <vector>
 
 #include "helpers.h"
 #include "settings.h"
 #include "auth/authbasic.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 #include "api/debug/debug.h"
 
 using namespace std;
@@ -11,18 +13,21 @@ using namespace std;
 namespace authbasic {
 
 string token = "";
+string connectToken = "";
 authbasic::TokenSecurity tokenSecurity = authbasic::TokenSecurityOneTime;
 bool tokenSent = false;
 
 json __makeAuthInfoPayload() {
     json info;
-    info["accessToken"] = token;
-    info["port"] = settings::getOptionForCurrentMode("port").get<int>();
+    info["nlToken"] = authbasic::getTokenInternal();
+    info["nlConnectToken"] = authbasic::getConnectTokenInternal();
+    info["nlPort"] = settings::getOptionForCurrentMode("port").get<int>();
     return info;
 }
 
 void init() {
     token = helpers::generateToken();
+    connectToken = helpers::splitTwo(token, '.')[1];
     json jTokenSecurity = settings::getOptionForCurrentMode("tokenSecurity");
     if(!jTokenSecurity.is_null()) {
         tokenSecurity = jTokenSecurity.get<string>() == "one-time"
@@ -31,9 +36,9 @@ void init() {
 }
 
 void exportAuthInfo() {
-    string tempDirPath = settings::joinAppPath("/.tmp");
-    fs::createDirectory(tempDirPath);
-    string tempAuthInfoPath = settings::joinAppPath("/.tmp/auth_info.json");
+    string tempDirPath = settings::joinAppDataPath("/.tmp");
+    filesystem::create_directories(CONVSTR(tempDirPath));
+    string tempAuthInfoPath = settings::joinAppDataPath("/.tmp/auth_info.json");
     fs::FileWriterOptions fileWriterOptions = {
         tempAuthInfoPath,
         __makeAuthInfoPayload().dump()
@@ -55,8 +60,16 @@ string getTokenInternal() {
     return token;
 }
 
+string getConnectTokenInternal() {
+    return connectToken;
+}
+
 bool verifyToken(const string &accessToken) {
     return token == accessToken;
+}
+
+bool verifyConnectToken(const string &inConnectToken) {
+    return connectToken == inConnectToken;
 }
 
 } // namespace authbasic

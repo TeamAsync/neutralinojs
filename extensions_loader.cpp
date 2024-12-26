@@ -19,11 +19,13 @@ namespace extensions {
 vector<string> loadedExtensions;
 bool initialized = false;
 
-string __buildExtensionArgs(const string &extensionId) {
-    string options = "";
-    options += " --nl-port=" + to_string(settings::getOptionForCurrentMode("port").get<int>());
-    options += " --nl-token=" + authbasic::getTokenInternal();
-    options += " --nl-extension-id=" + extensionId;
+json __buildExtensionProcessInput(const string &extensionId) {
+    json options = {
+        {"nlPort", to_string(settings::getOptionForCurrentMode("port").get<int>())},
+        {"nlToken", authbasic::getTokenInternal()},
+        {"nlConnectToken", authbasic::getConnectTokenInternal()},
+        {"nlExtensionId", extensionId}
+    };
     return options;
 }
 
@@ -45,9 +47,8 @@ void init() {
             string command = helpers::hasField(extension, commandKeyForOs) ? extension[commandKeyForOs].get<string>()
                                 : extension["command"].get<string>();
             command = regex_replace(command, regex("\\$\\{NL_PATH\\}"), settings::getAppPath());
-            command += __buildExtensionArgs(extensionId);
 
-            os::execCommand(command, "", true); // async
+            os::execCommand(command, __buildExtensionProcessInput(extensionId).dump(), true); // async
         }
 
         extensions::loadOne(extensionId);

@@ -1,5 +1,7 @@
 #include <string>
 #include <iostream>
+#include <filesystem>
+#include <regex>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <gtk/gtk.h>
@@ -19,6 +21,7 @@
 #define _WINSOCKAPI_
 #include <windows.h>
 #include <gdiplus.h>
+#include <winuser.h>
 #pragma comment(lib, "Gdiplus.lib")
 #pragma comment(lib, "WebView2LoaderStatic.lib")
 #endif
@@ -34,7 +37,7 @@
 #include "api/app/app.h"
 #include "api/window/window.h"
 #include "api/events/events.h"
-#include "api/filesystem/filesystem.h"
+#include "api/fs/fs.h"
 #include "api/debug/debug.h"
 
 using namespace std;
@@ -48,6 +51,7 @@ namespace window {
 webview::webview *nativeWindow;
 #if defined(__linux__) || defined(__FreeBSD__)
 bool isGtkWindowFullScreen = false;
+bool isGtkWindowMinimized = false;
 
 #elif defined(_WIN32)
 bool isWinWindowFullScreen = false;
@@ -63,9 +67,6 @@ NEU_W_HANDLE windowHandle;
 namespace handlers {
 
 void windowStateChange(int state) {
-    #if defined(__linux__) || defined(__FreeBSD__)
-        isGtkWindowFullScreen = state == WEBVIEW_WINDOW_FULLSCREEN;
-    #endif
     switch(state) {
         case WEBVIEW_WINDOW_CLOSE:
             if(windowProps.exitProcessOnClose ||
@@ -81,6 +82,27 @@ void windowStateChange(int state) {
             break;
         case WEBVIEW_WINDOW_BLUR:
             events::dispatch("windowBlur", nullptr);
+            break;
+        case WEBVIEW_WINDOW_FULLSCREEN:
+            #if defined(__linux__) || defined(__FreeBSD__)
+                isGtkWindowFullScreen = true;
+            #endif
+            break;
+        case WEBVIEW_WINDOW_UNFULLSCREEN:
+            #if defined(__linux__) || defined(__FreeBSD__)
+                isGtkWindowFullScreen = false;
+            #endif
+            break;
+        case WEBVIEW_WINDOW_MINIMIZED:
+            #if defined(__linux__) || defined(__FreeBSD__)
+                isGtkWindowMinimized = true;
+            #endif
+            break;
+        case WEBVIEW_WINDOW_UNMINIMIZED:
+            #if defined(__linux__) || defined(__FreeBSD__)
+                isGtkWindowMinimized = false;
+            #endif
+            break;
     }
 }
 
@@ -180,13 +202,13 @@ void __saveWindowProps() {
     options["y"] = pos.second;
     options["maximize"] = window::isMaximized();
 
-    fs::createDirectory(settings::joinAppPath("/.tmp"));
-    fs::FileWriterOptions writerOptions = { settings::joinAppPath(NEU_WIN_CONFIG_FILE), options.dump() };
+    filesystem::create_directories(CONVSTR(settings::joinAppDataPath("/.tmp")));
+    fs::FileWriterOptions writerOptions = { settings::joinAppDataPath(NEU_WIN_CONFIG_FILE), options.dump() };
     fs::writeFile(writerOptions);
 }
 
 bool __loadSavedWindowProps() {
-    fs::FileReaderResult readerResult = fs::readFile(settings::joinAppPath(NEU_WIN_CONFIG_FILE));
+    fs::FileReaderResult readerResult = fs::readFile(settings::joinAppDataPath(NEU_WIN_CONFIG_FILE));
     if(readerResult.status != errors::NE_ST_OK) {
         return false;
     }
@@ -212,11 +234,6 @@ NEU_W_HANDLE getWindowHandle() {
 
 bool isSavedStateLoaded() {
   return savedState;
-}
-
-void executeJavaScript(const string &js) {
-    if(nativeWindow)
-        nativeWindow->eval(js);
 }
 
 bool isMaximized() {
@@ -274,6 +291,7 @@ bool isVisible() {
 void show() {
     if(window::isVisible())
         return;
+    
     #if defined(__linux__) || defined(__FreeBSD__)
     gtk_widget_show(windowHandle);
     #elif defined(__APPLE__)
@@ -281,9 +299,20 @@ void show() {
                 "setIsVisible:"_sel, true);
     #elif defined(_WIN32)
     ShowWindow(windowHandle, SW_SHOW);
-    SetForegroundWindow(windowHandle);
+    SetWindowPos(windowHandle, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
+    if (!SetForegroundWindow(windowHandle)) {
+        FLASHWINFO fi;
+        fi.cbSize = sizeof(FLASHWINFO);
+        fi.hwnd = windowHandle;
+        fi.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;
+        fi.uCount = 0; // Flash indefinitely until the window comes to the foreground
+        fi.dwTimeout = 0;
+        FlashWindowEx(&fi);
+    }
+
     if (__isFakeHidden())
-		__undoFakeHidden();
+        __undoFakeHidden();
     #endif
 }
 
@@ -514,16 +543,43 @@ void _close(int exitCode) {
             __saveWindowProps();
         }
         nativeWindow->terminate(exitCode);
+        #if defined(_WIN32)
+        FreeConsole();
+        #endif
         delete nativeWindow;
     }
 }
 
 namespace controllers {
 
+void __injectClientLibrary() {
+    json options = settings::getConfig();
+    json jClientLibrary = options["cli"]["clientLibrary"];
+    if(!jClientLibrary.is_null()) {
+        string clientLibPath = jClientLibrary.get<string>();
+        fs::FileReaderResult fileReaderResult = resources::getFile(clientLibPath);
+        if(fileReaderResult.status == errors::NE_ST_OK) {
+            nativeWindow->init(settings::getGlobalVars() + "var NL_CINJECTED = true;" + 
+                fileReaderResult.data);
+        }
+    }
+}
+
+void __injectScript() {
+    json jInjectScript = settings::getOptionForCurrentMode("injectScript");
+    if(!jInjectScript.is_null()) {
+        string injectScript = jInjectScript.get<string>();
+        fs::FileReaderResult fileReaderResult = resources::getFile(injectScript);
+        if(fileReaderResult.status == errors::NE_ST_OK) {
+            nativeWindow->init("var NL_SINJECTED = true;" + fileReaderResult.data);
+        }
+    }
+}
+
 void __createWindow() {
     savedState = windowProps.useSavedState && __loadSavedWindowProps();
 
-    nativeWindow = new webview::webview(windowProps.enableInspector, nullptr);
+    nativeWindow = new webview::webview(windowProps.enableInspector, nullptr, windowProps.transparent);
     nativeWindow->set_title(windowProps.title);
     if(windowProps.extendUserAgentWith != "") {
         nativeWindow->extend_user_agent(windowProps.extendUserAgentWith);
@@ -534,6 +590,15 @@ void __createWindow() {
                     windowProps.sizeOptions.maxWidth, windowProps.sizeOptions.maxHeight,
                     windowProps.sizeOptions.resizable);
     nativeWindow->setEventHandler(&window::handlers::windowStateChange);
+
+    if(windowProps.injectGlobals) 
+        nativeWindow->init(settings::getGlobalVars() + "var NL_GINJECTED = true;");
+
+    if(windowProps.injectClientLibrary)
+        __injectClientLibrary();
+
+    if(windowProps.injectScript != "")
+        __injectScript();
 
     #if defined(__linux__) || defined(__FreeBSD__)
     windowHandle = (GtkWidget*) nativeWindow->window();
@@ -660,6 +725,36 @@ json minimize(const json &input) {
     ((void (*)(id, SEL, id))objc_msgSend)((id) windowHandle,
         "miniaturize:"_sel, NULL);
     #endif
+    output["success"] = true;
+    return output;
+}
+
+json unminimize(const json &input) {
+    json output;
+    #if defined(__linux__) || defined(__FreeBSD__)
+    gtk_window_present(GTK_WINDOW(windowHandle));
+    #elif defined(_WIN32)
+    ShowWindow(windowHandle, SW_RESTORE);
+    #elif defined(__APPLE__)
+    ((void (*)(id, SEL, id))objc_msgSend)((id) windowHandle,
+        "deminiaturize:"_sel, NULL);
+    #endif
+    output["success"] = true;
+    return output;
+}
+
+json isMinimized(const json &input) {
+    json output;
+    bool minimized = false;
+    #if defined(__linux__) || defined(__FreeBSD__)
+    minimized = isGtkWindowMinimized;
+    #elif defined(_WIN32)
+    minimized = IsIconic(windowHandle) == 1;
+    #elif defined(__APPLE__)
+    minimized = ((bool (*)(id, SEL, id))objc_msgSend)((id) windowHandle,
+        "isMiniaturized"_sel, NULL);
+    #endif
+    output["returnValue"] = minimized;
     output["success"] = true;
     return output;
 }
@@ -829,6 +924,9 @@ json init(const json &input) {
     if(helpers::hasField(input, "extendUserAgentWith"))
         windowProps.extendUserAgentWith = input["extendUserAgentWith"].get<string>();
 
+    if(helpers::hasField(input, "injectScript"))
+        windowProps.injectScript = input["injectScript"].get<string>();
+
     if(helpers::hasField(input, "enableInspector"))
         windowProps.enableInspector = input["enableInspector"].get<bool>();
 
@@ -844,11 +942,20 @@ json init(const json &input) {
     if(helpers::hasField(input, "center"))
         windowProps.center = input["center"].get<bool>();
 
+    if(helpers::hasField(input, "transparent"))
+        windowProps.transparent = input["transparent"].get<bool>();
+
     if(helpers::hasField(input, "exitProcessOnClose"))
         windowProps.exitProcessOnClose = input["exitProcessOnClose"].get<bool>();
 
     if(helpers::hasField(input, "useSavedState"))
         windowProps.useSavedState = input["useSavedState"].get<bool>();
+
+    if(helpers::hasField(input, "injectGlobals"))
+        windowProps.injectGlobals = input["injectGlobals"].get<bool>();
+
+    if(helpers::hasField(input, "injectClientLibrary"))
+        windowProps.injectClientLibrary = input["injectClientLibrary"].get<bool>();
 
     __createWindow();
     output["success"] = true;
